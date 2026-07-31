@@ -247,16 +247,10 @@ function CommitteeLive({ onBack, onFinished }) {
 function PreparingPanel() {
   const steps = [
     { done: true, text: "Loading JD and dimensions" },
-
-    {
-      done: true,
-      text: "Selecting agent personas (Business / HR / Finance / JAE COE)",
-    },
-
+    { done: true, text: "Building role fact sheet (team, financials, stakeholders)" },
+    { done: true, text: "Selecting agent personas (Business / HR / Finance / JAE COE)" },
     { done: true, text: "Loading Hay Guide Charts" },
-
-    { done: true, text: "Warming up Llama 3.1..." },
-
+    { done: true, text: "Connecting to Azure OpenAI..." },
     { done: false, text: "JAE COE preparing to open the committee" },
   ];
 
@@ -265,25 +259,18 @@ function PreparingPanel() {
       <div
         style={{
           textAlign: "center",
-
           fontSize: "44px",
-
           marginBottom: "20px",
         }}
       >
         ⚖️
       </div>
-
       <div
         style={{
           textAlign: "center",
-
           color: "#333",
-
           fontSize: "15px",
-
           fontWeight: "bold",
-
           marginBottom: "20px",
         }}
       >
@@ -295,26 +282,17 @@ function PreparingPanel() {
           key={i}
           style={{
             padding: "10px 15px",
-
             background: s.done ? "#d1fae5" : "white",
-
             borderRadius: "6px",
-
             marginBottom: "8px",
-
             display: "flex",
-
             alignItems: "center",
-
             gap: "10px",
-
             color: s.done ? "#065f46" : "#666",
-
             border: s.done ? "1px solid #a7f3d0" : "1px solid #e5e7eb",
           }}
         >
           <span style={{ fontSize: "16px" }}>{s.done ? "✅" : "⏳"}</span>
-
           <span style={{ fontSize: "14px" }}>{s.text}</span>
         </div>
       ))}
@@ -322,17 +300,13 @@ function PreparingPanel() {
       <div
         style={{
           textAlign: "center",
-
           color: "#666",
-
           marginTop: "20px",
-
           fontSize: "13px",
-
           fontStyle: "italic",
         }}
       >
-        Typical completion: 60–90 seconds on local Llama 3.1
+        Typical completion: 30–60 seconds on Azure OpenAI
       </div>
     </div>
   );

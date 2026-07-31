@@ -1,20 +1,14 @@
 // backend/committee/orchestrator.js
 
-// Optimized 6-round debate — parallel where possible, terse prompts
-
 import { createAgent, agentSpeak, parseJSON } from "../agents/agentRunner.js";
-
 import {
   buildBusinessSystemPrompt,
   getBusinessPersona,
 } from "../agents/prompts/businessAgent.js";
-
 import { buildHRSystemPrompt } from "../agents/prompts/hrAgent.js";
-
 import { buildFinanceSystemPrompt } from "../agents/prompts/financeAgent.js";
-
 import { buildJAECoESystemPrompt } from "../agents/prompts/jaeCoeAgent.js";
-
+import { buildRoleProfile, formatRoleProfile } from "./roleProfile.js";
 import {
   computeKnowHow,
   computeProblemSolving,
@@ -22,525 +16,294 @@ import {
   mapBand,
 } from "./hayCharts.js";
 
-function summarizeJD(wizardData, generated) {
-  const b = wizardData?.basic || {};
-
-  const bc = wizardData?.businessContext || {};
-
-  const g = generated || {};
-
-  const dimsLine = (wizardData?.dimensions || [])
-
-    .map((d) => `- ${d.name}: ${d.fyCurrent || ""}`)
-    .join("\n");
-
-  const challengesText =
-    g.challenges ||
-    (Array.isArray(wizardData?.challenges)
-      ? wizardData.challenges.join("\n")
-      : "Not provided");
-
-  const accountabilitiesText = (g.accountabilities || [])
-
-    .map((a) => `- ${a.accountability}: ${(a.actions || []).join("; ")}`)
-    .join("\n");
-
-  const bcBlock = bc.rolePurpose
-    ? `
-
-
-BUSINESS CONTEXT (provided by HR):
-
-- Why role exists: ${bc.rolePurpose}
-
-- Expected outcomes: ${(bc.outcomes || []).join(", ")}
-
-- Decision authority: ${bc.decisionAuthority}
-
-- Financial scale: Budget=${bc.financials?.budget || "N/A"}, Revenue=${bc.financials?.revenue || "N/A"}, AUM=${bc.financials?.aum || "N/A"}, Cost=${bc.financials?.cost || "N/A"}`
-    : "";
-
-  const reporteeSummary = wizardData?.hasNoReportees
-    ? "REPORTING SCOPE: Individual Contributor — no direct reportees."
-    : (wizardData?.reportees || []).length === 0
-      ? "REPORTING SCOPE: Not specified."
-      : "REPORTING SCOPE:\n" +
-        (wizardData.reportees || [])
-
-          .map(
-            (r) =>
-              `- ${r.count} people at ${r.band || "unknown band"} in ${r.department || "unknown dept"}`,
-          )
-
-          .join("\n");
-
-  return `ROLE: ${b.designation || "N/A"} | LOB: ${b.lob || "N/A"} | Department: ${b.department || "N/A"} | Target Band: ${b.band || "N/A"}
-
-Business: ${b.business || "N/A"} | Reports To: ${b.reportsTo || b.reportsToTitle || "N/A"}
-
-${bcBlock}
-
-
-JOB PURPOSE:
-
-${g.jobPurpose || wizardData?.jobPurpose || "Not provided"}
-
-
-KEY DIMENSIONS:
-
-${dimsLine || "None provided"}
-
-
-JOB CONTEXT:
-
-${g.jobContext || wizardData?.jobContext || "Not provided"}
-
-
-KEY CHALLENGES:
-
-${challengesText || "Not provided"}
-
-
-PRINCIPAL ACCOUNTABILITIES:
-
-${reporteeSummary}
-
-${accountabilitiesText || "Not provided"}`;
-}
-
 function summarizeNuances(nuances) {
   if (!nuances) return "None provided.";
-
   const parts = [];
-
   if (nuances.context) parts.push("Special Context: " + nuances.context);
-
   if (nuances.history) parts.push("Historical Context: " + nuances.history);
-
   if (nuances.comparableRoles)
     parts.push("Comparable Roles: " + nuances.comparableRoles);
-
   if (nuances.notes) parts.push("Points to Note: " + nuances.notes);
-
   return parts.length > 0 ? parts.join("\n") : "None provided.";
 }
 
-// Main orchestration — emits messages via callback as they're generated
-
 export async function runCommittee(jd, generated, nuances, onMessage) {
-  const b = jd.wizardData?.basic || {};
-
+  const wizardData = jd.wizardData || {};
+  const b = wizardData.basic || {};
   const lob = b.lob || "AMC";
-
   const department = b.department || "General";
 
-  // Create agents (one Ollama, four personas)
+  // Build the structured fact sheet — this is the key accuracy fix
+  let profile;
+  let factSheet;
+  try {
+    profile = buildRoleProfile(wizardData);
+    factSheet = formatRoleProfile(profile);
+    console.log("STEP D1 - role profile built:", {
+      reportees: profile.totalReportees,
+      magnitude: profile.suggestedMagnitude,
+      scale: profile.financialScaleCr,
+    });
+  } catch (e) {
+    console.error("❌ buildRoleProfile failed:", e.message);
+    throw new Error("Role profile build failed: " + e.message);
+  }
 
   const businessPersona = getBusinessPersona(lob, department);
-
   const agents = {
-    business: createAgent(
-      "business",
-
-      buildBusinessSystemPrompt(lob, department),
-    ),
-
+    business: createAgent("business", buildBusinessSystemPrompt(lob, department)),
     hr: createAgent("hr", buildHRSystemPrompt(lob, department)),
-
     finance: createAgent("finance", buildFinanceSystemPrompt(lob, department)),
-
     jaeCoe: createAgent("jaeCoe", buildJAECoESystemPrompt(lob)),
   };
 
   const agentNames = {
     business: businessPersona.role,
-
     hr: "HR Business Partner",
-
     finance: "Finance Business Partner",
-
     jaeCoe: "JAE COE Facilitator",
   };
 
   const transcript = [];
-
-  const jdSummary = summarizeJD(jd.wizardData || {}, generated);
-
   const nuancesSummary = summarizeNuances(nuances);
 
   const emit = async (agentKey, msg, round) => {
     const entry = {
       agentKey,
-
       agentName: agentNames[agentKey],
-
       msg,
-
       round,
-
       ts: Date.now(),
     };
-
     transcript.push(entry);
-
     if (onMessage) await onMessage(entry);
   };
 
-  // ============================================
-
-  // ROUND 1 — JAE COE opens the committee
-
-  // ============================================
-
+  // ROUND 1 — JAE COE opens with the fact sheet
   const opening = await agentSpeak(
     agents.jaeCoe,
+    `Open this JAE committee.
 
-    `Open this JAE committee for the following role.
-
-
-${jdSummary}
-
+${factSheet}
 
 NUANCES FROM HR TEAM:
-
 ${nuancesSummary}
 
-
-Give a brief 2-3 sentence opening: welcome the committee, state the role and target band, and note any nuances. UNDER 70 WORDS.`,
-
-    [],
+Give a 3-4 sentence opening that states the role, the key discriminating facts (team size, financial scale, stakeholder seniority), and what the committee must decide. Reference actual numbers from the fact sheet. UNDER 90 WORDS.`,
+    []
   );
-
   await emit("jaeCoe", opening, 1);
 
-  // ============================================
+  // ROUNDS 2-4 — Agents give FACTOR-LEVEL views in parallel
+  const businessView = await agentSpeak(
+    agents.business,
+    `${factSheet}
 
-  // ROUNDS 2-4 — All 3 agents present in PARALLEL
+As ${businessPersona.role}, give your view on ACCOUNTABILITY factors only.
 
-  // Each sees the JAE COE opening as shared context
+State explicitly:
+- Freedom to Act (A-H) and why
+- Magnitude bucket (1-6) and why
+- Impact type (R/C/S/P) and why
 
-  // ============================================
-
-  const [businessView, hrView, financeView] = await Promise.all([
-    agentSpeak(
-      agents.business,
-
-      `Present your view on this role. Focus on:
-
-- Business impact and market context
-
-- Whether the role warrants ${b.band || "the target band"} based on scope
-
-- Your initial view on Accountability (Freedom to Act, Magnitude, Impact type)
-
-
-Speak in first person as ${businessPersona.role}. 2-3 sentences MAX. UNDER 80 WORDS.`,
-
-      transcript,
-    ),
-
-    agentSpeak(
-      agents.hr,
-
-      `Present your view. Focus on:
-
-- Managerial Know-How (team scope, function integration)
-
-- Human Relations complexity
-
-- Parity with comparable ABCL roles at ${b.band || "target band"}
-
-- Push back if Business is likely to overstate
-
-
-2-3 sentences MAX. UNDER 80 WORDS.`,
-
-      transcript,
-    ),
-
-    agentSpeak(
-      agents.finance,
-
-      `Present your view. Focus on:
-
-- Accountability rigor — is Magnitude quantified and genuinely owned?
-
-- Freedom to Act — what is the actual authority in Rupees?
-
-- Impact type — Primary / Shared / Contributory
-
-- Cite specific dimensions from the JD
-
-
-2-3 sentences MAX. UNDER 80 WORDS.`,
-
-      transcript,
-    ),
-  ]);
-
+Cite specific numbers from the fact sheet. 3 sentences MAX. UNDER 90 WORDS. Do NOT mention any Job Band.`,
+    transcript
+  );
   await emit("business", businessView, 2);
 
+  const hrView = await agentSpeak(
+    agents.hr,
+    `${factSheet}
+
+As HR Business Partner, give your view on KNOW-HOW factors only.
+
+State explicitly:
+- Managerial breadth (T/I/II/III/IV) based on the reportee data
+- Human Relations (1/2/3) based on stakeholder seniority
+- Practical Knowledge (A-H) based on role complexity
+
+Cite the exact reportee count and departments. Challenge any inflation. 3 sentences MAX. UNDER 90 WORDS. Do NOT mention any Job Band.`,
+    transcript
+  );
   await emit("hr", hrView, 3);
 
+  const financeView = await agentSpeak(
+    agents.finance,
+    `${factSheet}
+
+As Finance Business Partner, interrogate the MAGNITUDE and IMPACT.
+
+The computed magnitude bucket is ${profile.suggestedMagnitude} based on Rs ${profile.financialScaleCr} Cr.
+
+State explicitly:
+- Do you accept magnitude bucket ${profile.suggestedMagnitude}? If not, what and why?
+- Is Impact Prime, Shared, Contributory, or Remote? Justify with ownership evidence.
+
+3 sentences MAX. UNDER 90 WORDS. Do NOT mention any Job Band.`,
+    transcript
+  );
   await emit("finance", financeView, 4);
 
-  // ============================================
-
-  // ROUND 5 — JAE COE surfaces disagreements
-
-  // ============================================
-
+  // ROUND 5 — JAE COE surfaces factor disagreements
   const debate = await agentSpeak(
     agents.jaeCoe,
+    `${factSheet}
 
-    `Summarize the 3 views above. Identify 1-2 KEY DISAGREEMENTS or gaps in evidence. Ask specific probing questions.
-
+The three agents have given factor views. Identify where they DISAGREE on specific factor letters/numbers. Ask one pointed question to resolve the biggest gap.
 
 3-4 sentences. UNDER 100 WORDS.`,
-
-    transcript,
+    transcript
   );
-
   await emit("jaeCoe", debate, 5);
 
-  // ============================================
-
-  // ROUND 6 — All 3 agents respond in PARALLEL
-
-  // ============================================
-
-  const [businessResponse, hrResponse, financeResponse] = await Promise.all([
-    agentSpeak(
-      agents.business,
-
-      `Respond to JAE COE's probing questions. Defend or refine your position. 2 sentences MAX. UNDER 60 WORDS.`,
-
-      transcript,
-    ),
-
-    agentSpeak(
-      agents.hr,
-
-      `Respond to JAE COE's probing questions. Defend or refine your position. 2 sentences MAX. UNDER 60 WORDS.`,
-
-      transcript,
-    ),
-
-    agentSpeak(
-      agents.finance,
-
-      `Respond to JAE COE's probing questions. Defend or refine your position. 2 sentences MAX. UNDER 60 WORDS.`,
-
-      transcript,
-    ),
-  ]);
-
+  // ROUND 6 — Agents respond in parallel
+  const businessResponse = await agentSpeak(
+    agents.business,
+    `Answer the JAE COE's question. State your FINAL factor recommendation for Accountability. 2 sentences MAX. UNDER 60 WORDS.`,
+    transcript
+  );
   await emit("business", businessResponse, 6);
 
+  const hrResponse = await agentSpeak(
+    agents.hr,
+    `Answer the JAE COE's question. State your FINAL factor recommendation for Know-How. 2 sentences MAX. UNDER 60 WORDS.`,
+    transcript
+  );
   await emit("hr", hrResponse, 6);
 
+  const financeResponse = await agentSpeak(
+    agents.finance,
+    `Answer the JAE COE's question. State your FINAL Magnitude and Impact. 2 sentences MAX. UNDER 60 WORDS.`,
+    transcript
+  );
   await emit("finance", financeResponse, 6);
 
-  // ============================================
-
-  // ROUND 7 — JAE COE gives final verdict with structured Hay scores
-
-  // ============================================
-
+  // ROUND 7 — Final verdict WITH fact sheet re-injected
   const verdictRaw = await agentSpeak(
     agents.jaeCoe,
+    `${factSheet}
 
-    `Based on the full committee discussion, produce your final Hay factor recommendation.
+Now produce the final Hay factor recommendation.
 
+MANDATORY CHECKS before you answer:
+1. Managerial: reportees = ${profile.totalReportees} across ${profile.reporteeDepts.length} departments. ${profile.hasNoReportees ? "This is an INDIVIDUAL CONTRIBUTOR — Managerial MUST be T." : ""}
+2. Magnitude: computed bucket = ${profile.suggestedMagnitude} (Rs ${profile.financialScaleCr} Cr). Do not exceed without evidence.
+3. Human Relations: Board contact = ${profile.touchesBoard ? "YES" : "NO"}, CXO contact = ${profile.touchesCxo ? "YES" : "NO"}.
+4. Freedom: requires approval = ${profile.requiresApproval ? "YES (cap at E)" : "NO"}, board-facing = ${profile.boardFacing ? "YES" : "NO"}.
 
-REMEMBER:
+Apply the DECISION RULES from your system prompt mechanically. Do NOT default to middle values.
 
-- You do NOT recommend a Job Band.
-
-- You recommend ONLY Hay factors.
-
-- Be evidence-based, not prestige-based.
-
-- Anti-inflation is your default.
-
-
-Return this EXACT JSON schema:
-
-
-{
-
-  "knowHow": {
-
-    "practical": "single letter A-H",
-
-    "managerial": "T, I, II, III, or IV",
-
-    "humanRelations": "1, 2, or 3",
-
-    "reasoning": "1-2 sentences with evidence"
-
-  },
-
-  "problemSolving": {
-
-    "environment": "A-H",
-
-    "challenge": "1-5",
-
-    "reasoning": "1-2 sentences with evidence"
-
-  },
-
-  "accountability": {
-
-    "freedomToAct": "A-H",
-
-    "magnitude": "1-6",
-
-    "impact": "R, C, S, or P",
-
-    "reasoning": "1-2 sentences with evidence"
-
-  },
-
-  "committeeSummary": "3-4 sentences summarizing the debate and evidence-based consensus"
-
-}
-
-
-Return ONLY the JSON. No preamble. No markdown fences. No mention of any Job Band.`,
-
-    transcript,
+Return ONLY the JSON schema. No markdown fences.`,
+    transcript
   );
 
-  const verdictParsed = parseJSON(verdictRaw, {
+  const fallback = {
     knowHow: {
       practical: "E",
-
-      managerial: "II",
-
-      humanRelations: "2",
-
-      reasoning: "Default fallback — LLM did not return valid JSON.",
+      managerial: profile.hasNoReportees ? "T" : "I",
+      humanRelations: profile.touchesBoard ? "3" : "2",
+      reasoning: "Fallback — LLM did not return valid JSON.",
     },
-
     problemSolving: {
       environment: "E",
-
       challenge: "3",
-
-      reasoning: "Default fallback.",
+      reasoning: "Fallback.",
     },
-
     accountability: {
-      freedomToAct: "E",
-
-      magnitude: "3",
-
+      freedomToAct: profile.requiresApproval ? "D" : "E",
+      magnitude: String(profile.suggestedMagnitude || 2),
       impact: "S",
-
-      reasoning: "Default fallback.",
+      reasoning: "Fallback.",
     },
+    matchedAnchor: "unknown",
+    committeeSummary: verdictRaw.slice(0, 400),
+  };
 
-    recommendedBand: b.band || "JB 8",
+  const parsed = parseJSON(verdictRaw, fallback);
 
-    summaryVerdict: verdictRaw.slice(0, 500),
-  });
-
-  // Compute actual scores using Guide Charts
+  // HARD OVERRIDE — enforce non-negotiable rules regardless of LLM output
+  if (profile.hasNoReportees) {
+    parsed.knowHow.managerial = "T";
+  }
+  if (profile.suggestedMagnitude === 0 && parsed.accountability) {
+    parsed.accountability.magnitude = "1";
+  }
 
   const khPoints = computeKnowHow(
-    verdictParsed.knowHow.practical,
-
-    verdictParsed.knowHow.managerial,
-
-    verdictParsed.knowHow.humanRelations,
+    parsed.knowHow.practical,
+    parsed.knowHow.managerial,
+    parsed.knowHow.humanRelations
   );
-
   const psResult = computeProblemSolving(
     khPoints,
-
-    verdictParsed.problemSolving.environment,
-
-    verdictParsed.problemSolving.challenge,
+    parsed.problemSolving.environment,
+    parsed.problemSolving.challenge
   );
-
   const acctPoints = computeAccountability(
-    verdictParsed.accountability.freedomToAct,
-
-    verdictParsed.accountability.magnitude,
-
-    verdictParsed.accountability.impact,
+    parsed.accountability.freedomToAct,
+    parsed.accountability.magnitude,
+    parsed.accountability.impact
   );
 
   const totalPoints = khPoints + psResult.points + acctPoints;
-
   const computedBand = mapBand(totalPoints);
 
   const finalScores = {
-    knowHow: { ...verdictParsed.knowHow, points: khPoints },
-
+    knowHow: { ...parsed.knowHow, points: khPoints },
     problemSolving: {
-      ...verdictParsed.problemSolving,
-
+      ...parsed.problemSolving,
       percentage: psResult.pct,
-
       points: psResult.points,
     },
-
-    accountability: { ...verdictParsed.accountability, points: acctPoints },
-
+    accountability: { ...parsed.accountability, points: acctPoints },
     totalPoints,
-
-    // Band is now ONLY computed from Hay chart — no LLM band
-
     computedBand,
-
     recommendedBand: computedBand,
-
-    summaryVerdict:
-      verdictParsed.committeeSummary || verdictParsed.summaryVerdict || "",
+    matchedAnchor: parsed.matchedAnchor || "",
+    roleSignals: {
+      totalReportees: profile.totalReportees,
+      departmentsManaged: profile.reporteeDepts.length,
+      financialScaleCr: profile.financialScaleCr,
+      computedMagnitudeBucket: profile.suggestedMagnitude,
+      touchesBoard: profile.touchesBoard,
+      touchesCxo: profile.touchesCxo,
+    },
+    summaryVerdict: parsed.committeeSummary || parsed.summaryVerdict || "",
   };
 
   await emit(
     "jaeCoe",
-
     `COMMITTEE CONSENSUS ON HAY FACTORS
 
+Matched anchor: ${finalScores.matchedAnchor || "n/a"}
 
 Know-How: Practical=${finalScores.knowHow.practical} | Managerial=${finalScores.knowHow.managerial} | Human Relations=${finalScores.knowHow.humanRelations}
+  ${finalScores.knowHow.reasoning}
 
 Problem Solving: Environment=${finalScores.problemSolving.environment} | Challenge=${finalScores.problemSolving.challenge}
+  ${finalScores.problemSolving.reasoning}
 
 Accountability: Freedom=${finalScores.accountability.freedomToAct} | Magnitude=${finalScores.accountability.magnitude} | Impact=${finalScores.accountability.impact}
-
+  ${finalScores.accountability.reasoning}
 
 ────────────────────────────
+ROLE SIGNALS USED
+Reportees: ${profile.totalReportees} across ${profile.reporteeDepts.length} dept(s)
+Financial scale: Rs ${profile.financialScaleCr} Cr (bucket ${profile.suggestedMagnitude})
+Board contact: ${profile.touchesBoard ? "Yes" : "No"} | CXO contact: ${profile.touchesCxo ? "Yes" : "No"}
 
-Hay Guide Chart Computation:
+HAY GUIDE CHART COMPUTATION
+Know-How = ${khPoints}
+Problem Solving = ${psResult.points} (${psResult.pct}% of Know-How)
+Accountability = ${acctPoints}
+TOTAL = ${totalPoints}
 
-Know-How Points = ${finalScores.knowHow.points}
-
-Problem Solving Points = ${finalScores.problemSolving.points} (${finalScores.problemSolving.percentage}% of Know-How)
-
-Accountability Points = ${finalScores.accountability.points}
-
-TOTAL HAY POINTS = ${totalPoints}
-
-
-Recommended Band (from Guide Chart): ${computedBand}
-
+RECOMMENDED BAND: ${computedBand}
 ────────────────────────────
 
 ${finalScores.summaryVerdict}`,
-    7,
+    7
   );
 
-  return {
-    transcript,
-
-    finalVerdict: finalScores,
-
-    agentNames,
-  };
+  return { transcript, finalVerdict: finalScores, agentNames };
 }

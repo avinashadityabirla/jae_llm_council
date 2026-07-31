@@ -34,27 +34,39 @@ export async function azureChat(messages, options = {}) {
     payload.max_completion_tokens = options.maxTokens;
   }
 
-  const response = await fetch(getChatUrl(), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "api-key": AZURE_OPENAI_API_KEY,
-    },
-    body: JSON.stringify(payload),
-  });
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs || 45000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(
-      "Azure OpenAI request failed with status " +
-      response.status +
-      ": " +
-      errorText
-    );
+  try {
+    const response = await fetch(getChatUrl(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "api-key": AZURE_OPENAI_API_KEY,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timer);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        "Azure OpenAI failed with status " + response.status + ": " + errorText
+      );
+    }
+
+    const data = await response.json();
+    return (data.choices?.[0]?.message?.content || "").trim();
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === "AbortError") {
+      throw new Error("Azure OpenAI call timed out after " + timeoutMs + "ms");
+    }
+    throw err;
   }
-
-  const data = await response.json();
-  return (data.choices?.[0]?.message?.content || "").trim();
 }
 
 // Convenience — system + user prompt
