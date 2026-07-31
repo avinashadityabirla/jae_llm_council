@@ -1,14 +1,17 @@
-// frontend/src/components/ui/MicButton.jsx
-
 import { useSpeechToText } from "../../hooks/useSpeechToText";
-
-// onAppend: function that receives spoken text and appends it to your field
 
 function MicButton({ onAppend, title = "Click to dictate" }) {
   const { listening, supported, start, stop } = useSpeechToText();
 
   if (!supported) {
-    return null; // Hide button if browser doesn't support speech
+    return (
+      <span
+        className="text-xs text-neutral-400"
+        title="Speech recognition not supported in this browser"
+      >
+        Mic n/a
+      </span>
+    );
   }
 
   const handleClick = () => {
@@ -16,7 +19,9 @@ function MicButton({ onAppend, title = "Click to dictate" }) {
       stop();
     } else {
       start((text) => {
-        onAppend(text);
+        if (typeof onAppend === "function") {
+          onAppend(text);
+        }
       });
     }
   };
@@ -25,15 +30,16 @@ function MicButton({ onAppend, title = "Click to dictate" }) {
     <button
       type="button"
       onClick={handleClick}
-      title={title}
+      title={listening ? "Click to stop dictation" : title}
       className={
-        "inline-flex items-center justify-center w-8 h-8 rounded-full transition-all flex-shrink-0 " +
+        "inline-flex items-center justify-center gap-1 px-2.5 h-8 rounded-full text-xs font-medium transition-all flex-shrink-0 " +
         (listening
           ? "bg-danger text-white animate-pulse"
           : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200")
       }
     >
-      {listening ? "⏹" : "🎤"}
+      <span>{listening ? "⏹" : "🎤"}</span>
+      <span>{listening ? "Stop" : "Dictate"}</span>
     </button>
   );
 }
