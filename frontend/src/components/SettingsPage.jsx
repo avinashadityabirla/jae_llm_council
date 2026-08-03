@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import Card from "./ui/Card";
 import Button from "./ui/Button";
+import { API_BASE } from "../api/client";
 
 function SettingsPage() {
   const [health, setHealth] = useState(null);
@@ -10,7 +11,7 @@ function SettingsPage() {
   const runHealthCheck = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:4000/api/system/health");
+      const res = await fetch(API_BASE + "/system/health");
       const data = await res.json();
       setHealth(data);
       setLastChecked(new Date());

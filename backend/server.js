@@ -1,9 +1,15 @@
+import path from "path";
+import { fileURLToPath } from "url";
+
 import express from "express";
 import cors from "cors";
 
 import jdRoutes from "./routes/jd.js";
 import committeeRoutes from "./routes/committee.js";
 import systemRoutes from "./routes/health.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const publicDir = path.join(__dirname, "public");
 
 const app = express();
 
@@ -22,6 +28,15 @@ app.get("/api/health", (req, res) => {
 app.use("/api/jd", jdRoutes);
 app.use("/api/committee", committeeRoutes);
 app.use("/api/system", systemRoutes);
+
+app.use(express.static(publicDir));
+
+app.use((req, res, next) => {
+  if (req.method === "GET" && !req.path.startsWith("/api")) {
+    return res.sendFile(path.join(publicDir, "index.html"));
+  }
+  next();
+});
 
 app.use((req, res) => {
   res.status(404).json({ error: "Route not found" });

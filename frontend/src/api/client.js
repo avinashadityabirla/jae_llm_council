@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:4000/api";
+export const API_BASE = "/api";
 
 async function request(path, options = {}) {
   const url = `${API_BASE}${path}`;

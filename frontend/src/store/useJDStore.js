@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { jdApi } from "../api/client";
+import { jdApi, API_BASE } from "../api/client";
 
 const emptyBusinessContext = () => ({
   rolePurpose: "",
@@ -305,7 +305,7 @@ export const useJDStore = create((set, get) => ({
     }
 
     window.open(
-      "http://localhost:4000/api/jd/" + currentJdId + "/download",
+      API_BASE + "/jd/" + currentJdId + "/download",
       "_blank",
     );
 
@@ -388,7 +388,7 @@ export const useJDStore = create((set, get) => ({
     set({ committeeLoading: true });
 
     try {
-      const res = await fetch("http://localhost:4000/api/committee", {
+      const res = await fetch(API_BASE + "/committee", {
         method: "POST",
 
         headers: { "Content-Type": "application/json" },
@@ -439,7 +439,7 @@ export const useJDStore = create((set, get) => ({
 
     try {
       const res = await fetch(
-        "http://localhost:4000/api/committee/" + committeeId,
+        API_BASE + "/committee/" + committeeId,
       );
 
       if (!res.ok) return;
@@ -488,7 +488,7 @@ export const useJDStore = create((set, get) => ({
     if (!committeeId) return;
 
     window.open(
-      "http://localhost:4000/api/committee/" + committeeId + "/report.pdf",
+      API_BASE + "/committee/" + committeeId + "/report.pdf",
       "_blank",
     );
 
@@ -499,7 +499,7 @@ export const useJDStore = create((set, get) => ({
     if (!id) return;
 
     window.open(
-      "http://localhost:4000/api/committee/" + id + "/report.pdf",
+      API_BASE + "/committee/" + id + "/report.pdf",
       "_blank",
     );
 
@@ -508,7 +508,7 @@ export const useJDStore = create((set, get) => ({
 
   loadCommitteeById: async (id) => {
     try {
-      const res = await fetch("http://localhost:4000/api/committee/" + id);
+      const res = await fetch(API_BASE + "/committee/" + id);
 
       const data = await res.json();
 
@@ -522,7 +522,7 @@ export const useJDStore = create((set, get) => ({
     set({ committeesLoading: true });
 
     try {
-      const res = await fetch("http://localhost:4000/api/committee");
+      const res = await fetch(API_BASE + "/committee");
 
       const data = await res.json();
 
